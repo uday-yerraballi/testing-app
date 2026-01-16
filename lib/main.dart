@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
@@ -7,115 +8,217 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Minimal Toggle',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+        brightness: Brightness.light,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const ToggleScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class ToggleScreen extends StatefulWidget {
+  const ToggleScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<ToggleScreen> createState() => _ToggleScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _ToggleScreenState extends State<ToggleScreen>
+    with SingleTickerProviderStateMixin {
+  // State variables
+  bool _isOn = false;
+  double _dragAlignment = -1.0; // -1.0 is Left (Off), 1.0 is Right (On)
+  
+  // Animation controller for snapping
+  late AnimationController _controller;
+  late Animation<double> _animation;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  // Constants for design
+  static const double _width = 300.0;
+  static const double _height = 100.0;
+  static const double _thumbPadding = 8.0;
+  // Thumb size is height - padding * 2
+  static const double _thumbSize = _height - (_thumbPadding * 2); 
+  
+  // Colors
+  // Green accent
+  static const Color _activeColor = Color(0xFF34C759); 
+  // Neural gray
+  static const Color _inactiveColor = Color(0xFFE5E5EA); 
+  // Darker gray for inactive track to ensure contrast
+  static const Color _inactiveTrackColor = Color(0xFFD1D1D6); 
+  
+  // Background Colors
+  static const Color _activeBg = Color(0xFFF0FDF4); // Very light green
+  static const Color _inactiveBg = Color(0xFFF2F2F7); // Neutral gray
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 300));
+    _controller.addListener(() {
+      setState(() {
+        _dragAlignment = _animation.value;
+      });
     });
   }
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // Calculate generic 0.0 to 1.0 progress based on alignment (-1.0 to 1.0)
+  double get _progress => (_dragAlignment + 1.0) / 2.0;
+
+  void _onPanDown(DragDownDetails details) {
+    _controller.stop();
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    setState(() {
+      // Convert drag delta to alignment delta
+      // Track width available for movement is _width - _thumbSize - (_thumbPadding * 2)
+      // Actually simpler: The alignment -1 to 1 maps to the travel distance.
+      // Travel distance = _width - _height (since thumb is roughly height)
+      // Let's approximate for smoother feel: map width to alignment range 2.0
+      
+      double deltaAlignment = (details.delta.dx / (_width / 2.5)); 
+      _dragAlignment += deltaAlignment;
+      _dragAlignment = _dragAlignment.clamp(-1.0, 1.0);
+      
+      // Update state visually based on threshold during drag? 
+      // User requested "snap-to-state behavior when dragged past 50% threshold"
+      // We will handle the actual boolean flip in onPanEnd.
+    });
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    // Snap logic
+    // If we passed the middle (0.0), toggle.
+    // Also consider velocity for a "flick"
+    bool targetState = _isOn;
+    
+    // Velocity threshold to detect flick
+    double velocity = details.velocity.pixelsPerSecond.dx;
+    
+    if (velocity > 500) {
+      targetState = true;
+    } else if (velocity < -500) {
+      targetState = false;
+    } else {
+      // Positional threshold
+      targetState = _dragAlignment > 0.0;
+    }
+
+    _animateToState(targetState);
+  }
+
+  void _toggle() {
+    _animateToState(!_isOn);
+  }
+
+  void _animateToState(bool targetIsOn) {
+    final double targetAlign = targetIsOn ? 1.0 : -1.0;
+    
+    if (_isOn != targetIsOn) {
+      HapticFeedback.lightImpact();
+    }
+    
+    _isOn = targetIsOn;
+    
+    _animation = _controller.drive(Tween<double>(
+      begin: _dragAlignment,
+      end: targetAlign,
+    ).chain(CurveTween(curve: Curves.easeOutBack))); // subtle bounce on release
+
+    _controller.reset();
+    _controller.forward();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    
+    // Interpolate colors based on drag position for smooth transitions
+    final Color trackColor = Color.lerp(
+      _inactiveTrackColor, 
+      _activeColor, 
+      _progress
+    )!;
+
+    final Color bgColor = Color.lerp(
+      _inactiveBg, 
+      _activeBg, 
+      _progress
+    )!;
+    
+    // Shadow intensity can also peak during interaction
+    final double shadowElevation = 10.0 + (5.0 * (1.0 - _dragAlignment.abs()));
+
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
+      backgroundColor: bgColor,
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+        child: GestureDetector(
+          onTap: _toggle,
+          onHorizontalDragDown: _onPanDown,
+          onHorizontalDragUpdate: _onPanUpdate,
+          onHorizontalDragEnd: _onPanEnd,
+          child: Container(
+            width: _width,
+            height: _height,
+            decoration: BoxDecoration(
+              color: trackColor,
+              borderRadius: BorderRadius.circular(_height / 2),
+              boxShadow: [
+                BoxShadow(
+                  color: trackColor.withOpacity(0.4),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-          ],
+            child: Stack(
+              children: [
+                // The Thumb
+                Align(
+                  alignment: Alignment(_dragAlignment, 0.0),
+                  child: Padding(
+                    padding: const EdgeInsets.all(_thumbPadding),
+                    child: Container(
+                      width: _thumbSize,
+                      height: _thumbSize,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.15),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }
